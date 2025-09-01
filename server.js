@@ -2,17 +2,28 @@ const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const { RateLimiterMemory } = require('rate-limiter-flexible');
+const cors = require('cors'); // Add CORS package
 
 const app = express();
 const port = 10000;
+
+// CORS configuration
+app.use(
+  cors({
+    origin: ['http://localhost:5173', 'http://103.118.16.25:8081', '*'], // Allow specific origins and all (*)
+    methods: ['GET'], // Restrict to GET requests
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
 
 // Config
 const site = {
   name: 'Economic Times',
   baseUrl: 'https://economictimes.indiatimes.com',
-  section: '/markets/stocks/news' // Narrowed to news section
+  section: '/markets/stocks/news',
 };
-const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
+const userAgent =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
 const threeDaysAgo = new Date();
 threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
 const threeDaysAgoStr = threeDaysAgo.toISOString().split('T')[0];
@@ -30,7 +41,7 @@ async function fetchPage(url, retries = 2) {
     const response = await axios.get(url, {
       headers: {
         'User-Agent': userAgent,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.5',
       },
       timeout: 10000,
@@ -39,7 +50,7 @@ async function fetchPage(url, retries = 2) {
   } catch (error) {
     if (retries > 0 && error.response?.status === 403) {
       console.warn(`Retrying ${url} (${retries} attempts left)...`);
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       return fetchPage(url, retries - 1);
     }
     console.error(`Error fetching ${url}: ${error.message}`);
@@ -54,11 +65,10 @@ async function getArticleLinks() {
   if (!$) return [];
 
   const links = [];
-  const selectors = 'a[href*="/articleshow/"]'; // Focus on article pages
+  const selectors = 'a[href*="/articleshow/"]';
   $(selectors).each((i, el) => {
     let link = $(el).attr('href');
     if (link && !link.startsWith('http')) link = site.baseUrl + link;
-    // Exclude non-article pages
     if (
       link &&
       !links.includes(link) &&
@@ -77,7 +87,7 @@ async function getArticleLinks() {
   });
 
   console.log(`Found ${links.length} article links`);
-  return links.slice(0, 10); // Limit for speed
+  return links.slice(0, 10);
 }
 
 // Check article
@@ -89,14 +99,15 @@ async function checkArticle(url) {
   const title = $('title').text().trim() || $('h1').first().text().trim() || 'No title';
 
   // Extract publish date
-  let rawDate = $('meta[property="article:published_time"]').attr('content') ||
-                $('meta[name="publish-date"]').attr('content') ||
-                $('time').attr('datetime') ||
-                $('.date, .pub_time, .timeStamp, .pubtime, .article-date, .story-date').text().trim();
+  let rawDate =
+    $('meta[property="article:published_time"]').attr('content') ||
+    $('meta[name="publish-date"]').attr('content') ||
+    $('time').attr('datetime') ||
+    $('.date, .pub_time, .timeStamp, .pubtime, .article-date, .story-date').text().trim();
   let pubDate = null;
   if (rawDate) {
     try {
-      // Handle formats like "Aug 31, 2025, 10:00 AM IST"
+      // Handle various date formats
       if (!rawDate.includes('T') && rawDate.includes(',')) {
         rawDate = rawDate.replace(/IST/, '').trim();
       }
@@ -113,15 +124,18 @@ async function checkArticle(url) {
   }
 
   // Extract content snippet
-  const content = $('article, .content, .story-body, .artText, .articleBody, p').text().trim().slice(0, 500);
+  const content = $('article, .content, .story-body, .artText, .articleBody, p')
+    .text()
+    .trim()
+    .slice(0, 500);
 
   // Include article if valid date in last 3 days or no date
   if (pubDate && pubDate >= threeDaysAgoStr || !pubDate) {
     return {
-      title,
+      title: title || 'Untitled',
       url,
       pubDate: pubDate || 'Unknown',
-      snippet: content.slice(0, 200) + '...'
+      snippet: content ? content.slice(0, 200) + '...' : 'No snippet available',
     };
   }
   return null;
@@ -147,16 +161,16 @@ app.get('/news', async (req, res) => {
       count: articles.length,
       dateRange: {
         from: threeDaysAgoStr,
-        to: new Date().toISOString().split('T')[0]
+        to: new Date().toISOString().split('T')[0],
       },
-      articles
+      articles,
     });
   } catch (error) {
     console.error('API error:', error);
     res.status(500).json({
       status: 'error',
       message: 'Failed to fetch news',
-      error: error.message
+      error: error.message,
     });
   }
 });
